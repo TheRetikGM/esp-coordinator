@@ -27,6 +27,9 @@ transport& transport::instance() {
 
 esp_err_t transport::write_int(const void *buffer, size_t size)
 {
+  ESP_LOGI("send", "SENDING DATA TO Z2M");
+  utils::hex_dump(buffer, size);
+
 #if defined(CONFIG_NCP_BUS_MODE_UART)
     return (uart_write_bytes(UART_PORT_NUM, (const char*) buffer, size) == size) ? ESP_OK : ESP_ERR_INVALID_SIZE;
 #elif defined(CONFIG_NCP_BUS_MODE_USB)
@@ -39,7 +42,7 @@ void transport::task_int() {
 #if defined(CONFIG_NCP_BUS_MODE_UART)
     uart_event_t event;
 #endif
-   
+
     app::ctx_t ncp_event = {
         .event = app::EVENT_OUTPUT,
         .size = 0
@@ -131,7 +134,7 @@ esp_err_t transport::send_int(const void* data,size_t size) {
     	utils::sem_lock l(m_input_sem);
     	ret_size = xStreamBufferSend(m_input_buf, data, size, 0);
     }
-    
+
     if (ret_size != size) {
         ESP_LOGE(TAG, "input_buf send error: size %d expect %d", ret_size, size);
         return ESP_FAIL;
@@ -142,7 +145,7 @@ esp_err_t transport::send_int(const void* data,size_t size) {
 }
 
 esp_err_t transport::init_int() {
-	
+
 	ESP_LOGI(TAG,"init");
 
     m_input_buf = xStreamBufferCreate(RINGBUF_SIZE, 8);

@@ -1,5 +1,6 @@
 #include "utils.h"
 #include "zboss_decl.h"
+#include <cctype>
 
 namespace utils {
 
@@ -111,4 +112,37 @@ namespace utils {
 	    }
 	    return "unknown";
 	}
+
+void hex_dump(const void* data, size_t size) {
+    const unsigned char* bytes = (const unsigned char*)data;
+    const size_t bytes_per_line = 16;
+
+    for (size_t i = 0; i < size; i += bytes_per_line) {
+        // Print offset
+        printf("%08zx  ", i);
+
+        // Print hex bytes
+        for (size_t j = 0; j < bytes_per_line; ++j) {
+            if (i + j < size)
+                printf("%02x ", bytes[i + j]);
+            else
+                printf("   ");
+            if (j == 7) printf(" "); // Extra space in the middle
+        }
+
+        printf(" |");
+
+        // Print ASCII characters
+        for (size_t j = 0; j < bytes_per_line; ++j) {
+            if (i + j < size) {
+                unsigned char c = bytes[i + j];
+                printf("%c", isprint(c) ? c : '.');
+            } else {
+                printf(" ");
+            }
+        }
+
+        printf("|\n");
+    }
+}
 }

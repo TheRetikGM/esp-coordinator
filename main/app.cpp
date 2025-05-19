@@ -28,7 +28,7 @@ esp_err_t app::send_event_int(const ctx_t& ctx) {
     } else {
         ret = xQueueSend(m_queue, &ctx, 0);
     }
-	
+
     return (ret == pdTRUE) ? ESP_OK : ESP_FAIL ;
 }
 
@@ -88,7 +88,7 @@ esp_err_t app::start_int() {
 
  	// uint8_t outdata[2] = { 0,0 };
     // esp_ncp_header_t header = {{0,0,0,},NCP_RESET,0,0};
-    // esp_ncp_resp_input(&header, outdata, sizeof(outdata)); 
+    // esp_ncp_resp_input(&header, outdata, sizeof(outdata));
 
 	ctx_t ctx;
     while (true) {
@@ -106,6 +106,7 @@ esp_err_t app::start_int() {
 
 esp_err_t app::init() {
 	ESP_LOGI(TAG,"init");
+
 	auto res = nvs_flash_init();
 	if (res != ESP_OK)
 		return res;
@@ -113,6 +114,8 @@ esp_err_t app::init() {
 	if (res != ESP_OK) {
 		return res;
 	}
+
+
 	return instance().init_int();
 }
 

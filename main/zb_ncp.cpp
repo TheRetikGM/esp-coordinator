@@ -3,6 +3,8 @@
 #include "protocol.h"
 #include "statuses.h"
 #include "utils.h"
+#include "zb_debug.h"
+#include <cctype>
 
 static const char* TAG = "NCP";
 
@@ -20,7 +22,7 @@ zb_ncp& zb_ncp::instance() {
 ZB_DECLARE_SIMPLE_DESC(7,20);
 
 static const zb_af_simple_desc_7_20_t ep1 = {
-	
+
 		.endpoint = 1,
 		.app_profile_id = ZB_AF_HA_PROFILE_ID,
 		.app_device_id = 0xbeef,
@@ -33,7 +35,7 @@ static const zb_af_simple_desc_7_20_t ep1 = {
 			0x0000, 0x0003, 0x0004, 0x0005, 0x0006, 0x0008, 0x0020, 0x0300, 0x0400, 0x0402, 0x0405, 0x0406, 0x0500, 0x0b01, 0x0b03, 0x0b04,
 			0x0702, 0x1000, 0xfc01, 0xfc02,
 		}
-	
+
 };
 
 
@@ -62,7 +64,7 @@ static bool s_init_flag = false;
 
 void zb_ncp::ncp_zb_task(void* arg) {
 	zb_set_network_coordinator_role(0xffffff);
-    
+
     zboss_start_no_autostart();
 
     zboss_main_loop();
@@ -71,7 +73,7 @@ void zb_ncp::ncp_zb_task(void* arg) {
 
 bool zb_ncp::start_zigbee_stack() {
 	if (!s_init_flag) {
-            
+
         ESP_LOGI(TAG,"Start Zigbee task");
 
         xTaskCreate(&zb_ncp::ncp_zb_task, "ncp_zb_task", ZB_TASK_STACK_SIZE, NULL, 5, NULL);
@@ -83,6 +85,28 @@ bool zb_ncp::start_zigbee_stack() {
     }
 }
 
+typedef struct {
+    const char *str;
+    int num;
+} StringIntPair;
+
+const StringIntPair COMMAND_NAMES[] =  {
+#define COMMAND(Name, Val) { #Name, Val },
+#include "commands_list.h"
+#undef COMMAND
+};
+
+const char* get_command_name(unsigned command_id) {
+  const static int s = sizeof(COMMAND_NAMES) / sizeof(StringIntPair);
+  for (int i = 0; i < s; i++) {
+    if (COMMAND_NAMES[i].num == command_id) {
+      return COMMAND_NAMES[i].str;
+    }
+  }
+
+  return "not found";
+}
+
 void zb_ncp::on_rx_data(const void* data,size_t size) {
 	const cmd_t& cmd = *static_cast<const cmd_t*>(data);
 	if (cmd.type != REQUEST && cmd.type != RESPONSE) {
@@ -92,6 +116,9 @@ void zb_ncp::on_rx_data(const void* data,size_t size) {
 	auto len = size - sizeof(cmd_t);
 	auto buf = static_cast<const uint8_t*>(data)+sizeof(cmd_t);
 
+  ESP_LOGI("dbg", "on_rx_data: COMMAND: %s (%X)\n", get_command_name(cmd.command_id), cmd.command_id);
+  utils::hex_dump(data, size);
+
     switch(cmd.command_id) {
 #define COMMAND(Name,Val) \
         case Name: \
@@ -100,25 +127,24 @@ void zb_ncp::on_rx_data(const void* data,size_t size) {
 #include "commands_list.h"
 #undef COMMAND
         default: {
-            //ret = ESP_ERR_INVALID_ARG; 
+            //ret = ESP_ERR_INVALID_ARG;
             ESP_LOGE(TAG,"unknown cmd %04x",cmd.command_id);
-            //esp_ncp_resp_input(ncp_header, invalid_cmd_resp, 2); 
+            //esp_ncp_resp_input(ncp_header, invalid_cmd_resp, 2);
             uint8_t outdata[2+sizeof(zb_ncp::cmd_t)];
 	        zb_ncp::cmd_t* out_cmd = reinterpret_cast<zb_ncp::cmd_t*>(outdata);
 	        *out_cmd = cmd;
 	       	out_cmd->type = RESPONSE;
 	       	outdata[0+sizeof(zb_ncp::cmd_t)] = STATUS_CATEGORY_GENERIC;
 	       	outdata[1+sizeof(zb_ncp::cmd_t)] = GENERIC_NOT_IMPLEMENTED;
-	       	zb_ncp::send_cmd_data( outdata, sizeof(outdata) ); 
+	       	zb_ncp::send_cmd_data( outdata, sizeof(outdata) );
         } break;
     }
-
 }
 
 void zb_ncp::send_cmd_data(const void* data,size_t size) {
 	const auto cmd = static_cast<const cmd_t*>(data);
 	ESP_LOGD(TAG,"Send cmd data: %04x",cmd->command_id);
-	auto res = protocol::send_data( data, size ); 
+	auto res = protocol::send_data( data, size );
 	if (res != ESP_OK) {
 		ESP_LOGE(TAG,"Failed send data");
 	}
@@ -133,7 +159,7 @@ void zb_ncp::indication(command_id_t cmd,const void* data,size_t size) {
 	buffer[1] = INDICATION;
 	*reinterpret_cast<uint16_t*>(&buffer[2]) = cmd;
 	memcpy(&buffer[4],data,size);
-	auto res = protocol::send_data( buffer, size+4 ); 
+	auto res = protocol::send_data( buffer, size+4 );
 	if (res != ESP_OK) {
 		ESP_LOGE(TAG,"Failed send indication");
 	}
@@ -142,7 +168,7 @@ void zb_ncp::indication(command_id_t cmd,const void* data,size_t size) {
 static zb_uint8_t data_indication(zb_bufid_t param) {
   zb_apsde_data_indication_t *ind = ZB_BUF_GET_PARAM(param, zb_apsde_data_indication_t);
   static_assert(sizeof(zb_apsde_data_indication_t)==0x20);
- 
+
   auto begin = static_cast<const uint8_t*>(zb_buf_begin(param));
   auto len = zb_buf_len(param);
 
@@ -150,7 +176,7 @@ static zb_uint8_t data_indication(zb_bufid_t param) {
     " dstAddr: %04x srcEndpoint: %d dstEndpoint: %d data: %d tsn: %d",
     ind->profileid,ind->clusterid,ind->src_addr,ind->dst_addr,
     int(ind->src_endpoint),int(ind->dst_endpoint),int(len),ind->tsn);
- 
+
   if (ind->src_endpoint == 0) {
     ESP_LOGD(TAG,"skip, %d %d",int(ind->src_endpoint),int(ind->dst_endpoint));
     return ZB_FALSE;
@@ -191,7 +217,7 @@ static zb_uint8_t data_indication(zb_bufid_t param) {
       write_u8(ind->lqi); //  {name: 'lqi', type: DataType.UINT8},
       write_u8(ind->rssi); //  {name: 'rssi', type: DataType.UINT8},
       write_u8(ind->aps_key_source|(ind->aps_key_attrs<<1)|(ind->aps_key_from_tc<<3)|(ind->extended_fc<<4)); //  {name: 'apsKey', type: DataType.UINT8},
-      
+
       ::memcpy(out,begin,len);
       out += len;
 
@@ -208,10 +234,10 @@ static zb_uint8_t data_indication(zb_bufid_t param) {
 void zb_ncp::continue_zboss(uint8_t arg) {
     ESP_LOGI(TAG,"continue_zboss");
     zb_af_set_data_indication(data_indication);
-    
-    
 
-   
+
+
+
     ESP_LOGI(TAG,"continue_zboss 1");
     // ncp_cmd_handle<S_ESP_NCP_NETWORK_INIT>::response(0);
 
@@ -235,18 +261,18 @@ extern "C" void zboss_signal_handler(zb_uint8_t param)
     int status = ZB_GET_APP_SIGNAL_STATUS(param);
     bool success = status == 0;
 
-  
+
     switch (sig)
     {
     case ZB_ZDO_SIGNAL_SKIP_STARTUP:
         ESP_LOGD(TAG,"ZB_ZDO_SIGNAL_SKIP_STARTUP");
-      
+
         ESP_LOGI(TAG, "Initialize Zigbee stack");
-        
-        
+
+
         zb_schedule_app_callback(zb_ncp::continue_zboss,0);
-        
-        
+
+
         break;
     case ZB_BDB_SIGNAL_DEVICE_FIRST_START:
     case ZB_BDB_SIGNAL_DEVICE_REBOOT:
@@ -288,7 +314,7 @@ extern "C" void zboss_signal_handler(zb_uint8_t param)
         auto parameters = ZB_ZDO_SIGNAL_GET_PARAMS(sg_p,const zb_zdo_signal_device_update_params_t);
         ESP_LOGD(TAG,"addr: %04x status: %d parent: %04x",parameters->short_addr,int(parameters->status),parameters->parent_short);
 
-    
+
         zb_ncp::indication(ZDO_DEV_UPDATE_IND,parameters,sizeof(zb_zdo_signal_device_update_params_t));
         // {name: 'ieee', type: DataType.IEEE_ADDR},
         // {name: 'nwk', type: DataType.UINT16},
@@ -296,13 +322,13 @@ extern "C" void zboss_signal_handler(zb_uint8_t param)
     }break;
 
     case ZB_ZDO_SIGNAL_DEVICE_AUTHORIZED: {
-        
+
         auto parameters = ZB_ZDO_SIGNAL_GET_PARAMS(sg_p,const zb_zdo_signal_device_authorized_params_t);
         ESP_LOGD(TAG,"ZB_ZDO_SIGNAL_DEVICE_AUTHORIZED long_addr: " IEEE_ADDR_FMT " short_addr: %04x auth_type: %d auth_status: %d",
             IEEE_ADDR_PRINT(parameters->long_addr),parameters->short_addr,
             int(parameters->authorization_type),int(parameters->authorization_status));
 
-    
+
         zb_ncp::indication(ZDO_DEV_AUTHORIZED_IND,parameters,sizeof(zb_zdo_signal_device_authorized_params_t));
     } break;
 
@@ -319,12 +345,12 @@ extern "C" void zboss_signal_handler(zb_uint8_t param)
             bdb_start_top_level_commissioning(ZB_BDB_NETWORK_STEERING);
             ESP_LOGI(TAG, "Formed network successfully");
         } else {
-            
+
         }
- 
+
         break;
 
-    
+
 
     case ZB_BDB_SIGNAL_FINDING_AND_BINDING_TARGET_FINISHED:
         ESP_LOGD(TAG,"ZB_BDB_SIGNAL_FINDING_AND_BINDING_TARGET_FINISHED");
@@ -337,7 +363,7 @@ extern "C" void zboss_signal_handler(zb_uint8_t param)
         ESP_LOGD(TAG,"ZB_NWK_SIGNAL_DEVICE_ASSOCIATED addr: " IEEE_ADDR_FMT,IEEE_ADDR_PRINT(parameters->device_addr));
         break;
     }
-    
+
     case ZB_BDB_SIGNAL_WWAH_REJOIN_STARTED:
         ESP_LOGD(TAG,"ZB_BDB_SIGNAL_WWAH_REJOIN_STARTED");
         break;
@@ -363,7 +389,7 @@ extern "C" void zboss_signal_handler(zb_uint8_t param)
         }
         break;
     }
-    
+
 
     case ZB_NWK_SIGNAL_PERMIT_JOIN_STATUS:
         ESP_LOGD(TAG,"ZB_NWK_SIGNAL_PERMIT_JOIN_STATUS");
@@ -379,12 +405,12 @@ extern "C" void zboss_signal_handler(zb_uint8_t param)
         }
         break;
 
-    
-        
+
+
     default:
         ESP_LOGE(TAG,"unknown signal: %d %d",sig,status);
         break;
-        
+
     }
     zb_buf_free(param);
 }

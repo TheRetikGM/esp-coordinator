@@ -30,4 +30,6 @@ namespace utils {
     static_cast<unsigned int>(a[0]),static_cast<unsigned int>(a[1]),static_cast<unsigned int>(a[2]),static_cast<unsigned int>(a[3]), \
     static_cast<unsigned int>(a[4]),static_cast<unsigned int>(a[5]),static_cast<unsigned int>(a[6]),static_cast<unsigned int>(a[7])
 
+
+  void hex_dump(const void* data, size_t size);
 }
