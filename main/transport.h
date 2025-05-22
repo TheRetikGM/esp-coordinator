@@ -34,6 +34,7 @@ private:
 	}
 
 	esp_err_t send_int(const void* data,size_t size);
+  esp_err_t receive_int(const void* data, size_t size);
 
 	esp_err_t process_input_int(void* buffer,size_t size);
 public:
@@ -41,6 +42,7 @@ public:
 	static esp_err_t start() { return instance().start_int(); }
 
 	static esp_err_t send(const void* data,size_t size) { return instance().send_int(data,size); }
+  static esp_err_t receive(const void* data, size_t size) { return instance().receive_int(data,size); }
 
 	static esp_err_t process_input(void* buffer,size_t size) { return instance().process_input_int(buffer,size); }
 	static size_t output_receive(void* buffer,size_t size);

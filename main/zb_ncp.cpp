@@ -111,13 +111,14 @@ void zb_ncp::on_rx_data(const void* data,size_t size) {
 	const cmd_t& cmd = *static_cast<const cmd_t*>(data);
 	if (cmd.type != REQUEST && cmd.type != RESPONSE) {
 		ESP_LOGE(TAG,"Indication received from host");
+    utils::hex_dump(data, size);
 	 	return;
 	}
 	auto len = size - sizeof(cmd_t);
 	auto buf = static_cast<const uint8_t*>(data)+sizeof(cmd_t);
 
-  ESP_LOGI("dbg", "on_rx_data: COMMAND: %s (%X)\n", get_command_name(cmd.command_id), cmd.command_id);
-  utils::hex_dump(data, size);
+  // ESP_LOGI("dbg", "on_rx_data: COMMAND: %s (%X)\n", get_command_name(cmd.command_id), cmd.command_id);
+  // utils::hex_dump(data, size);
 
     switch(cmd.command_id) {
 #define COMMAND(Name,Val) \

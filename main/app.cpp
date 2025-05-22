@@ -1,4 +1,5 @@
 #include "app.h"
+#include "compat/driver.hpp"
 #include "transport.h"
 #include "protocol.h"
 #include "zb_ncp.h"
@@ -33,35 +34,35 @@ esp_err_t app::send_event_int(const ctx_t& ctx) {
 }
 
 esp_err_t app::process_event(const ctx_t& ctx) {
-	size_t recv_size = 0;
-    esp_err_t ret = ESP_OK;
+  size_t recv_size = 0;
+  esp_err_t ret = ESP_OK;
 
-    if (ctx.size > sizeof(m_buffer)) {
-        ESP_LOGE(TAG, "Process event out of memory %d",ctx.size);
-        return ESP_ERR_NO_MEM;
-    }
+  if (ctx.size > sizeof(m_buffer)) {
+    ESP_LOGE(TAG, "Process event out of memory %d",ctx.size);
+    return ESP_ERR_NO_MEM;
+  }
 
-    switch (ctx.event) {
-        case EVENT_INPUT:
-        	ret = transport::process_input(m_buffer,ctx.size);
-            break;
-        case EVENT_OUTPUT:
-            recv_size = transport::output_receive(m_buffer,ctx.size);
-			if (recv_size != ctx.size) {
-                ESP_LOGE(TAG, "Output buffer receive error: size %d expect %d!", recv_size, ctx.size);
-            } else {
-                //ESP_LOGD(TAG,"esp_ncp_bus_output %d",ctx->size);
-                ret = protocol::on_rx(m_buffer, ctx.size);
-            }
-            break;
-        case EVENT_RESET:
-            esp_restart();
-            break;
-        default:
-            break;
-    }
+  switch (ctx.event) {
+    case EVENT_INPUT:
+      ret = transport::process_input(m_buffer,ctx.size);
+      break;
+    case EVENT_OUTPUT:
+      recv_size = transport::output_receive(m_buffer,ctx.size);
+      if (recv_size != ctx.size) {
+        ESP_LOGE(TAG, "Output buffer receive error: size %d expect %d!", recv_size, ctx.size);
+      } else {
+        //ESP_LOGD(TAG,"esp_ncp_bus_output %d",ctx->size);
+        ret = protocol::on_rx(m_buffer, ctx.size);
+      }
+      break;
+    case EVENT_RESET:
+      esp_restart();
+      break;
+    default:
+      break;
+  }
 
-    return ret;
+  return ret;
 }
 
 esp_err_t app::init_int() {
@@ -77,31 +78,36 @@ esp_err_t app::init_int() {
 	if (!m_queue) {
 		return ESP_ERR_NO_MEM;
 	}
+
+  res = ZBOSSDriver::init();
+  if (res != ESP_OK)
+    return res;
+
 	return ESP_OK;
 }
 
 esp_err_t app::start_int() {
-	ESP_LOGV(TAG,"start_int");
-	auto res = transport::start();
-	if (res != ESP_OK)
-		return res;
+  ESP_LOGV(TAG,"start_int");
+  auto res = transport::start();
+  if (res != ESP_OK)
+    return res;
 
- 	// uint8_t outdata[2] = { 0,0 };
-    // esp_ncp_header_t header = {{0,0,0,},NCP_RESET,0,0};
-    // esp_ncp_resp_input(&header, outdata, sizeof(outdata));
+  res = ZBOSSDriver::start();
+  if (res != ESP_OK)
+    return res;
 
-	ctx_t ctx;
-    while (true) {
-        if (xQueueReceive(m_queue, &ctx, portMAX_DELAY) != pdTRUE) {
-            continue;
-        }
-
-        if (process_event(ctx) != ESP_OK) {
-            ESP_LOGE(TAG, "Process event fail");
-            break;
-        }
+  ctx_t ctx;
+  while (true) {
+    if (xQueueReceive(m_queue, &ctx, portMAX_DELAY) != pdTRUE) {
+      continue;
     }
-	return ESP_OK;
+
+    if (process_event(ctx) != ESP_OK) {
+      ESP_LOGE(TAG, "Process event fail");
+      break;
+    }
+  }
+  return ESP_OK;
 }
 
 esp_err_t app::init() {

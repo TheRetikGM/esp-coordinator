@@ -1,5 +1,7 @@
 #include "transport.h"
 #include "app.h"
+#include "compat/driver.hpp"
+#include "freertos/idf_additions.h"
 #include "utils.h"
 
 #include <esp_log.h>
@@ -27,8 +29,10 @@ transport& transport::instance() {
 
 esp_err_t transport::write_int(const void *buffer, size_t size)
 {
-  ESP_LOGI("send", "SENDING DATA TO Z2M");
-  utils::hex_dump(buffer, size);
+  // ESP_LOGI("send", "SENDING DATA TO Z2M");
+  // utils::hex_dump(buffer, size);
+  ZBOSSDriver::receive(buffer, size);
+  return ESP_OK;
 
 #if defined(CONFIG_NCP_BUS_MODE_UART)
     return (uart_write_bytes(UART_PORT_NUM, (const char*) buffer, size) == size) ? ESP_OK : ESP_ERR_INVALID_SIZE;
@@ -88,6 +92,20 @@ void transport::task_int() {
         }
 #endif
     }
+}
+
+esp_err_t transport::receive_int(const void* data, size_t size) {
+  app::ctx_t ncp_event = {
+      .event = app::EVENT_OUTPUT,
+      .size = (uint16_t)size
+  };
+
+  ESP_LOGI(TAG, "Sending data: %i", size);
+  // xStreamBufferSend(m_output_buf, data, size, 0);
+  // app::send_event(ncp_event);
+  app::on_rx_data(data, size);
+
+  return ESP_OK;
 }
 
 size_t transport::output_receive(void* buffer,size_t size) {
@@ -173,7 +191,7 @@ esp_err_t transport::init_int() {
         .data_bits = static_cast<uart_word_length_t>(CONFIG_NCP_BUS_UART_BYTE_SIZE),
         .parity = UART_PARITY_DISABLE,
         .stop_bits = static_cast<uart_stop_bits_t>(CONFIG_NCP_BUS_UART_STOP_BITS),
-        .flow_ctrl = static_cast<uart_hw_flowcontrol_t>(CONFIG_NCP_BUS_UART_FLOW_CONTROL),
+        .flow_ctrl = tatic_cast<uart_hw_flowcontrol_t>(CONFIG_NCP_BUS_UART_FLOW_CONTROL),
         .source_clk = UART_SCLK_DEFAULT,
     };
 
