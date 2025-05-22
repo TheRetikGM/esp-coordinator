@@ -44,6 +44,7 @@ void ZBOSSDriver::addEndpoint(uint8_t endpoint, uint16_t profileId, uint16_t dev
   });
 }
 
+// TODO: Refactor
 void ZBOSSDriver::task_int() {
   int i = 0;
   uint16_t last_id = 0x0;
