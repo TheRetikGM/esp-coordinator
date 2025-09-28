@@ -5,6 +5,8 @@
 #include "utils.h"
 #include "zb_debug.h"
 #include <cctype>
+#include "commands_list.h"
+#include "ind_impl.h"
 
 static const char* TAG = "NCP";
 
@@ -19,7 +21,16 @@ zb_ncp& zb_ncp::instance() {
 	return s_zb_ncp;
 }
 
-ZB_DECLARE_SIMPLE_DESC(7,20);
+typedef struct zb_af_simple_desc_7_20_s {
+  zb_uint8_t endpoint;
+  zb_uint16_t app_profile_id;
+  zb_uint16_t app_device_id;
+  zb_bitfield_t app_device_version : 4;
+  zb_bitfield_t reserved : 4;
+  zb_uint8_t app_input_cluster_count;
+  zb_uint8_t app_output_cluster_count;
+  zb_uint16_t app_cluster_list[(7) + (20)];
+} __attribute__((packed)) zb_af_simple_desc_7_20_t;
 
 static const zb_af_simple_desc_7_20_t ep1 = {
 
@@ -32,8 +43,9 @@ static const zb_af_simple_desc_7_20_t ep1 = {
 		.app_output_cluster_count = 20,
 		.app_cluster_list = {
 			0x0000, 0x0003, 0x0006, 0x000a, 0x0019, 0x001a, 0x0300,
-			0x0000, 0x0003, 0x0004, 0x0005, 0x0006, 0x0008, 0x0020, 0x0300, 0x0400, 0x0402, 0x0405, 0x0406, 0x0500, 0x0b01, 0x0b03, 0x0b04,
-			0x0702, 0x1000, 0xfc01, 0xfc02,
+			0x0000, 0x0003, 0x0004, 0x0005, 0x0006, 0x0008, 0x0020,
+      0x0300, 0x0400, 0x0402, 0x0405, 0x0406, 0x0500, 0x0b01,
+      0x0b03, 0x0b04, 0x0702, 0x1000, 0xfc01, 0xfc02,
 		}
 
 };
@@ -92,7 +104,7 @@ typedef struct {
 
 const StringIntPair COMMAND_NAMES[] =  {
 #define COMMAND(Name, Val) { #Name, Val },
-#include "commands_list.h"
+  COMMANDS_LIST
 #undef COMMAND
 };
 
@@ -108,38 +120,7 @@ const char* get_command_name(unsigned command_id) {
 }
 
 void zb_ncp::on_rx_data(const void* data,size_t size) {
-	const cmd_t& cmd = *static_cast<const cmd_t*>(data);
-	if (cmd.type != REQUEST && cmd.type != RESPONSE) {
-		ESP_LOGE(TAG,"Indication received from host");
-    utils::hex_dump(data, size);
-	 	return;
-	}
-	auto len = size - sizeof(cmd_t);
-	auto buf = static_cast<const uint8_t*>(data)+sizeof(cmd_t);
-
-  // ESP_LOGI("dbg", "on_rx_data: COMMAND: %s (%X)\n", get_command_name(cmd.command_id), cmd.command_id);
-  // utils::hex_dump(data, size);
-
-    switch(cmd.command_id) {
-#define COMMAND(Name,Val) \
-        case Name: \
-            cmd_handle<Name>::process(cmd, buf, len); \
-            break;
-#include "commands_list.h"
-#undef COMMAND
-        default: {
-            //ret = ESP_ERR_INVALID_ARG;
-            ESP_LOGE(TAG,"unknown cmd %04x",cmd.command_id);
-            //esp_ncp_resp_input(ncp_header, invalid_cmd_resp, 2);
-            uint8_t outdata[2+sizeof(zb_ncp::cmd_t)];
-	        zb_ncp::cmd_t* out_cmd = reinterpret_cast<zb_ncp::cmd_t*>(outdata);
-	        *out_cmd = cmd;
-	       	out_cmd->type = RESPONSE;
-	       	outdata[0+sizeof(zb_ncp::cmd_t)] = STATUS_CATEGORY_GENERIC;
-	       	outdata[1+sizeof(zb_ncp::cmd_t)] = GENERIC_NOT_IMPLEMENTED;
-	       	zb_ncp::send_cmd_data( outdata, sizeof(outdata) );
-        } break;
-    }
+  ESP_LOGD(TAG, "Removed function");
 }
 
 void zb_ncp::send_cmd_data(const void* data,size_t size) {
@@ -150,20 +131,10 @@ void zb_ncp::send_cmd_data(const void* data,size_t size) {
 		ESP_LOGE(TAG,"Failed send data");
 	}
 }
-void zb_ncp::indication(command_id_t cmd,const void* data,size_t size) {
-	uint8_t buffer[256];
-	if ((size+4) > sizeof(buffer)) {
-		ESP_LOGE(TAG,"Indication too long");
-		return;
-	}
-	buffer[0] = 0;
-	buffer[1] = INDICATION;
-	*reinterpret_cast<uint16_t*>(&buffer[2]) = cmd;
-	memcpy(&buffer[4],data,size);
-	auto res = protocol::send_data( buffer, size+4 );
-	if (res != ESP_OK) {
-		ESP_LOGE(TAG,"Failed send indication");
-	}
+
+template<command_id_t CmdId, typename... TArgs>
+void zb_ncp::indication(const TArgs&... args) {
+  zb_ncp::ind_handle<CmdId>::m_callback(args...);
 }
 
 static zb_uint8_t data_indication(zb_bufid_t param) {
@@ -191,39 +162,7 @@ static zb_uint8_t data_indication(zb_bufid_t param) {
 
 
   if (len <= 255) {
-      uint8_t outdata[8+8*2+255];
-
-      uint8_t* out = outdata;
-      auto write_u16 = [&out](uint16_t val) {
-        *reinterpret_cast<uint16_t*>(out) = val;
-        out += 2;
-      };
-      auto write_u8 = [&out](uint8_t val) {
-        *out++ = val;
-      };
-      write_u8(0);                  // {name: 'paramLength', type: DataType.UINT8},
-      write_u16(len);               // {name: 'dataLength', type: DataType.UINT16},
-      write_u8(ind->fc);            //  {name: 'apsFC', type: DataType.UINT8},
-      write_u16(ind->src_addr);     //  {name: 'srcNwk', type: DataType.UINT16},
-      write_u16(ind->dst_addr);     //  {name: 'dstNwk', type: DataType.UINT16},
-      write_u16(ind->group_addr);   //  {name: 'grpNwk', type: DataType.UINT16},
-
-      write_u8(ind->dst_endpoint); //  {name: 'dstEndpoint', type: DataType.UINT8},
-      write_u8(ind->src_endpoint); //  {name: 'srcEndpoint', type: DataType.UINT8},
-      write_u16(ind->clusterid); //  {name: 'clusterID', type: DataType.UINT16},
-      write_u16(ind->profileid); //  {name: 'profileID', type: DataType.UINT16},
-      write_u8(ind->aps_counter); //  {name: 'apsCounter', type: DataType.UINT8},
-      write_u16(ind->mac_src_addr); //  {name: 'srcMAC', type: DataType.UINT16},
-      write_u16(ind->mac_dst_addr); //  {name: 'dstMAC', type: DataType.UINT16},
-      write_u8(ind->lqi); //  {name: 'lqi', type: DataType.UINT8},
-      write_u8(ind->rssi); //  {name: 'rssi', type: DataType.UINT8},
-      write_u8(ind->aps_key_source|(ind->aps_key_attrs<<1)|(ind->aps_key_from_tc<<3)|(ind->extended_fc<<4)); //  {name: 'apsKey', type: DataType.UINT8},
-
-      ::memcpy(out,begin,len);
-      out += len;
-
-
-      zb_ncp::indication(APSDE_DATA_IND,outdata,out-&outdata[0]);
+      zb_ncp::indication<APSDE_DATA_IND>(*ind);
   } else {
     ESP_LOGE(TAG,"too long packet");
   }
@@ -235,9 +174,6 @@ static zb_uint8_t data_indication(zb_bufid_t param) {
 void zb_ncp::continue_zboss(uint8_t arg) {
     ESP_LOGI(TAG,"continue_zboss");
     zb_af_set_data_indication(data_indication);
-
-
-
 
     ESP_LOGI(TAG,"continue_zboss 1");
     // ncp_cmd_handle<S_ESP_NCP_NETWORK_INIT>::response(0);
@@ -290,7 +226,7 @@ extern "C" void zboss_signal_handler(zb_uint8_t param)
     case ZB_ZDO_SIGNAL_DEVICE_ANNCE: {
         ESP_LOGD(TAG,"ZB_ZDO_SIGNAL_DEVICE_ANNCE");
         auto parameters = ZB_ZDO_SIGNAL_GET_PARAMS(sg_p,const zb_zdo_signal_device_annce_params_t);
-        zb_ncp::indication(ZDO_DEV_ANNCE_IND,parameters,sizeof(zb_zdo_signal_device_annce_params_t));
+        zb_ncp::indication<ZDO_DEV_ANNCE_IND>(*parameters);
     } break;
     case ZB_ZDO_SIGNAL_LEAVE: {
         auto parameters = ZB_ZDO_SIGNAL_GET_PARAMS(sg_p,const zb_zdo_signal_leave_params_t);
@@ -303,7 +239,7 @@ extern "C" void zboss_signal_handler(zb_uint8_t param)
     case ZB_ZDO_SIGNAL_LEAVE_INDICATION: {
         auto parameters = ZB_ZDO_SIGNAL_GET_PARAMS(sg_p,const zb_zdo_signal_leave_indication_params_t);
         ESP_LOGD(TAG,"ZB_ZDO_SIGNAL_LEAVE_INDICATION");
-        zb_ncp::indication(NWK_LEAVE_IND,parameters,sizeof(zb_zdo_signal_leave_indication_params_t));
+        zb_ncp::indication<NWK_LEAVE_IND>(*parameters);
     } break;
     case ZB_ZDO_DEVICE_UNAVAILABLE: {
         auto parameters = ZB_ZDO_SIGNAL_GET_PARAMS(sg_p,const zb_zdo_device_unavailable_params_t);
@@ -315,8 +251,7 @@ extern "C" void zboss_signal_handler(zb_uint8_t param)
         auto parameters = ZB_ZDO_SIGNAL_GET_PARAMS(sg_p,const zb_zdo_signal_device_update_params_t);
         ESP_LOGD(TAG,"addr: %04x status: %d parent: %04x",parameters->short_addr,int(parameters->status),parameters->parent_short);
 
-
-        zb_ncp::indication(ZDO_DEV_UPDATE_IND,parameters,sizeof(zb_zdo_signal_device_update_params_t));
+        zb_ncp::indication<ZDO_DEV_UPDATE_IND>(*parameters);
         // {name: 'ieee', type: DataType.IEEE_ADDR},
         // {name: 'nwk', type: DataType.UINT16},
         // {name: 'status', type: DataType.UINT8, typed: DeviceUpdateStatus},
@@ -330,7 +265,7 @@ extern "C" void zboss_signal_handler(zb_uint8_t param)
             int(parameters->authorization_type),int(parameters->authorization_status));
 
 
-        zb_ncp::indication(ZDO_DEV_AUTHORIZED_IND,parameters,sizeof(zb_zdo_signal_device_authorized_params_t));
+        zb_ncp::indication<ZDO_DEV_AUTHORIZED_IND>(*parameters);
     } break;
 
     case ZB_BDB_SIGNAL_STEERING:

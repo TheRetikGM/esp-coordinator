@@ -1,5 +1,5 @@
 #pragma once
-
+#include <cstdint>
 
 enum ncp_status_category_t : uint8_t {
     STATUS_CATEGORY_GENERIC = 0,

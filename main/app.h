@@ -28,11 +28,11 @@ private:
 
 	static constexpr size_t BUFFER_SIZE = 256 * 2;
 
-	QueueHandle_t m_queue; 
+	QueueHandle_t m_queue;
 	uint8_t m_buffer[BUFFER_SIZE];
 
 public:
-	
+
 	static esp_err_t send_event(const ctx_t& ctx){ return instance().send_event_int(ctx); }
 
 	static esp_err_t init();

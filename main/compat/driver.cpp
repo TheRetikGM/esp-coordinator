@@ -2,13 +2,18 @@
  * @file main/compat/driver.cpp
  */
 #include "driver.hpp"
-#include "enums.hpp"
+#include "commands.h"
 #include "freertos/idf_additions.h"
-#include <algorithm>
 #include <cstdint>
 #include "../transport.h"
 
 #define TAG "ZBOSSDriver"
+
+#include "commands_impl.h"
+#include "ind_impl.h"
+
+#define ARR8_INIT(arr8) { arr8[0], arr8[1], arr8[2], arr8[3], arr8[4], arr8[5], arr8[6], arr8[7] }
+
 
 ZBOSSDriver::ZBOSSDriver() {
 }
@@ -32,127 +37,179 @@ esp_err_t ZBOSSDriver::init_int() {
 void ZBOSSDriver::addEndpoint(uint8_t endpoint, uint16_t profileId, uint16_t deviceId,
                  const std::vector<uint16_t>& inputClusters,
                  const std::vector<uint16_t>& outputClusters) {
-  execCommand(CommandId::AF_SET_SIMPLE_DESC, {
-      { "endpoint", endpoint },
-      { "profileID", profileId },
-      { "deviceID", deviceId },
-      { "version", (uint8_t)0 },
-      { "inputClusterCount", (uint8_t)inputClusters.size() },
-      { "outputClusterCount", (uint8_t)outputClusters.size() },
-      { "inputClusters", inputClusters },
-      { "outputClusters", outputClusters },
+
+  zb_ncp::cmd_handle<AF_SET_SIMPLE_DESC>::process_immediate_d({
+      .endpoint = endpoint,
+      .profileID = profileId,
+      .deviceID = deviceId,
+      .version = 0,
+      .inputClusterCount = (uint8_t)inputClusters.size(),
+      .outputClusterCount = (uint8_t)outputClusters.size(),
+      // TODO: Add clusters
   });
+}
+
+void ZBOSSDriver::initCommunication() {
+  auto _joined = zb_ncp::cmd_handle<GET_JOINED>::process_status_res_d();
+  auto _role = zb_ncp::cmd_handle<GET_ZIGBEE_ROLE>::process_status_res_d();
+  auto _ieee_addr = zb_ncp::cmd_handle<GET_LOCAL_IEEE_ADDR>::process_status_arg_res_d(0);
+  auto _extended_pan_id = zb_ncp::cmd_handle<GET_EXTENDED_PAN_ID>::process_status_res_d();
+  auto _pan_id = zb_ncp::cmd_handle<GET_PAN_ID>::process_status_res_d();
+  auto _channel = zb_ncp::cmd_handle<GET_ZIGBEE_CHANNEL>::process_status_res_d();
+  zb_ncp::cmd_handle<SET_ZIGBEE_ROLE>::process_status_arg_d(ZB_NWK_DEVICE_TYPE_COORDINATOR);
+  zb_ncp::cmd_handle<SET_ZIGBEE_CHANNEL_MASK>::process_status_arg_d({
+      .page = 0,
+      .mask = 1 << 11
+  });
+  zb_ncp::cmd_handle<SET_PAN_ID>::process_status_arg_d(0x0e94);
+  zb_ncp::cmd_handle<SET_NWK_KEY>::process_status_arg_d({
+      .nwkKey = {
+        0x1e, 0xc5, 0x82, 0x77, 0x7d, 0xcd, 0xfd, 0xdf,
+        0xd0, 0x72, 0xf7, 0x99, 0x5f, 0xfd, 0x82, 0x4f
+      },
+      .index = 0
+  });
+
+  zb_ncp::cmd_handle<NWK_FORMATION>::process(
+    NWK_FORMATION_arg_t{
+      .channels = {
+        { .page = 0, .mask = 1 << 11 },
+      },
+      .duration = 0x05,
+      .distrib_flag = 0x00,
+      .distrib_nwk = 0x0000,
+      .extended_pan_id = ARR8_INIT(_extended_pan_id.value),
+    },
+    [](const NWK_FORMATION_resp_t& r) {
+      ESP_LOGI(TAG, "NWK_FORMATION response: { 0x%x, 0x%x, 0x%x }", r.category, r.status, r.nwk);
+    }
+  );
+
+  // Set policies
+  zb_ncp::cmd_handle<SET_TC_POLICY>::process_status_arg_d(SET_TC_POLICY_arg_t{
+      .type = LINK_KEY_REQUIRED,
+      .value = 0
+  });
+  zb_ncp::cmd_handle<SET_TC_POLICY>::process_status_arg_d(SET_TC_POLICY_arg_t{
+      .type = IC_REQUIRED,
+      .value = 0
+  });
+  zb_ncp::cmd_handle<SET_TC_POLICY>::process_status_arg_d(SET_TC_POLICY_arg_t{
+      .type = TC_REJOIN_ENABLED,
+      .value = 1
+  });
+  zb_ncp::cmd_handle<SET_TC_POLICY>::process_status_arg_d(SET_TC_POLICY_arg_t{
+      .type = IGNORE_TC_REJOIN,
+      .value = 0
+  });
+  zb_ncp::cmd_handle<SET_TC_POLICY>::process_status_arg_d(SET_TC_POLICY_arg_t{
+      .type = APS_INSECURE_JOIN,
+      .value = 0
+  });
+  zb_ncp::cmd_handle<SET_TC_POLICY>::process_status_arg_d(SET_TC_POLICY_arg_t{
+      .type = DISABLE_NWK_MGMT_CHANNEL_UPDATE,
+      .value = 0
+  });
+
+  addEndpoint(1, 260, 0xbeef, {0x0000, 0x0003, 0x0006, 0x000a, 0x0019, 0x001a, 0x0300},
+              {
+                0x0000, 0x0003, 0x0004, 0x0005, 0x0006, 0x0008, 0x0020, 0x0300, 0x0400,
+                0x0402, 0x0405, 0x0406, 0x0500, 0x0b01, 0x0b03, 0x0b04, 0x0702, 0x1000,
+                0xfc01, 0xfc02,
+              });
+  addEndpoint(242, 0xa1e0, 0x61, {}, { 0x0021 });
+
+  zb_ncp::cmd_handle<SET_RX_ON_WHEN_IDLE>::process_status_arg_d(1);
 }
 
 // TODO: Refactor
 void ZBOSSDriver::task_int() {
-  int i = 0;
   uint16_t last_id = 0x0;
+
+  initCommunication();
+
+  zb_ncp::ind_handle<APSDE_DATA_IND>::connect([](const zb_apsde_data_indication_t& arg){
+    ESP_LOGI(TAG, "APSDE_DATA_IND: ClusterId: 0x%x, EndpointId: 0x%x -> 0x%x",
+        arg.clusterid, arg.src_endpoint, arg.dst_endpoint);
+
+    ESP_LOGI(TAG, "<<<<< APSDE_DATA_IND");
+    ESP_LOGI(TAG, "fc = 0x%i", arg.fc);
+    ESP_LOGI(TAG, "src_addr = 0x%i", arg.src_addr);
+    ESP_LOGI(TAG, "dst_addr = 0x%i", arg.dst_addr);
+    ESP_LOGI(TAG, "group_addr = 0x%i", arg.group_addr);
+    ESP_LOGI(TAG, "dst_endpoint = 0x%i", arg.dst_endpoint);
+    ESP_LOGI(TAG, "src_endpoint = 0x%i", arg.src_endpoint);
+    ESP_LOGI(TAG, "clusterid = 0x%i", arg.clusterid);
+    ESP_LOGI(TAG, "profile_id = 0x%i", arg.profileid);
+    ESP_LOGI(TAG, "aps_counter = 0x%i", arg.aps_counter);
+    ESP_LOGI(TAG, "mac_src_addr = 0x%i", arg.mac_src_addr);
+    ESP_LOGI(TAG, "mac_dst_addr = 0x%i", arg.mac_dst_addr);
+    ESP_LOGI(TAG, "tsn = 0x%i", arg.tsn);
+    ESP_LOGI(TAG, "block_num = 0x%i", arg.block_num);
+    ESP_LOGI(TAG, "block_ack = 0x%i", arg.block_ack);
+    ESP_LOGI(TAG, "radius = 0x%i", arg.radius);
+    ESP_LOGI(TAG, "====");
+
+    uint8_t dst_addr[8] = {0};
+    *reinterpret_cast<uint16_t*>(dst_addr) = arg.src_addr;
+
+    APSDE_DATA_REQ_max_arg_t req = {
+      .hdr = {
+        .paramLength = sizeof(apsde_data_req_base_t),
+        .dataLength = 0,
+        .base = {
+          .addr_data = ARR8_INIT(dst_addr),
+          .profile_id = arg.profileid,
+          .cluster_id = arg.clusterid,
+          .dst_endpoint = arg.src_endpoint,
+          .src_endpoint = arg.dst_endpoint,
+          .radius = arg.radius,
+          .addr_mode = ZB_APS_ADDR_MODE_16_ENDP_PRESENT,
+          .tx_options = ZB_TRUE,
+          .use_alias = 0,
+          .alias_src_addr = 0,
+          .alias_seq_num = 0
+        },
+      },
+      .data = { 0 }
+    };
+
+    zb_ncp::cmd_t cmd = {
+      .version = 0,
+      .type = zb_ncp::REQUEST,
+      .command_id = APSDE_DATA_REQ,
+      .tsn = 0,
+    };
+
+    zb_ncp::cmd_handle<APSDE_DATA_REQ>::process(cmd, &req, sizeof(req));
+  });
+
   while (true) {
-    if (i == 0) {
-      i = 1;
-      auto result = execCommand(CommandId::GET_JOINED, {});
-      if (result.IsErr()) {
-        ESP_LOGE(TAG, "execCommand failed: %s", result.Err().c_str());
-      }
-
-      // Get network info
-      result = execCommand(CommandId::GET_ZIGBEE_ROLE, {});
-      bool joined = m_buffer[16] == 1;
-
-      result = execCommand(CommandId::GET_LOCAL_IEEE_ADDR, Payload{ { "mac", (uint8_t)0 } });
-      uint8_t ieee_addr[8];
-      std::copy(m_buffer.data() + 16 + 1, m_buffer.data() + 16 + 1 + 8, ieee_addr);
-
-      result = execCommand(CommandId::GET_EXTENDED_PAN_ID, {});
-      uint8_t extended_pan_id[8] = { 0 };
-      std::copy(m_buffer.data() + 16, m_buffer.data() + 16 + 8, extended_pan_id);
-
-      result = execCommand(CommandId::GET_PAN_ID, {});
-      uint8_t pan_id[8] = { 0 };
-      std::copy(m_buffer.data() + 16, m_buffer.data() + 16 + 8, pan_id);
-
-      result = execCommand(CommandId::GET_ZIGBEE_CHANNEL, {});
-      uint8_t channel = m_buffer[16 + 1];
-
-      // Form network
-      result = execCommand(CommandId::SET_ZIGBEE_ROLE, {{"role", (uint8_t)DeviceType::COORDINATOR}});
-      result = execCommand(CommandId::SET_ZIGBEE_CHANNEL_MASK, {
-          {"page", (uint8_t)0},
-          {"mask", (uint32_t)(1 << 11)}
-      });
-      result = execCommand(CommandId::SET_PAN_ID, {{"panID", (uint16_t)0x0e94}});
-      result = execCommand(CommandId::SET_NWK_KEY, {
-          {"nwkKey", Buffer{
-            0x1e, 0xc5, 0x82, 0x77, 0x7d, 0xcd, 0xfd, 0xdf,
-            0xd0, 0x72, 0xf7, 0x99, 0x5f, 0xfd, 0x82, 0x4f
-          }},
-          {"index", (uint8_t)0}
-      });
-      result = execCommand(CommandId::NWK_FORMATION, {
-          {"len", (uint8_t)1},
-          {"channels", std::vector<Payload>{{ {"page", (uint8_t)0}, {"mask", (uint32_t)(1 << 11)} }}},
-          {"duration", (uint8_t)0x05},
-          {"distribFlag", (uint8_t)0x00},
-          {"distribNwk", (uint16_t)0x0000},
-          {"extendedPanID", Buffer(extended_pan_id, extended_pan_id + 8)}
-      });
-
-      // Set policies
-      execCommand(CommandId::SET_TC_POLICY, {
-          {"type", (uint16_t)PolicyType::LINK_KEY_REQUIRED},
-          {"value", (uint8_t)0}
-      });
-      execCommand(CommandId::SET_TC_POLICY, {
-          {"type", (uint16_t)PolicyType::IC_REQUIRED},
-          {"value", (uint8_t)0}
-      });
-      execCommand(CommandId::SET_TC_POLICY, {
-          {"type", (uint16_t)PolicyType::TC_REJOIN_ENABLED},
-          {"value", (uint8_t)1}
-      });
-      execCommand(CommandId::SET_TC_POLICY, {
-          {"type", (uint16_t)PolicyType::IGNORE_TC_REJOIN},
-          {"value", (uint8_t)0}
-      });
-      execCommand(CommandId::SET_TC_POLICY, {
-          {"type", (uint16_t)PolicyType::APS_INSECURE_JOIN},
-          {"value", (uint8_t)0}
-      });
-      execCommand(CommandId::SET_TC_POLICY, {
-          {"type", (uint16_t)PolicyType::DISABLE_NWK_MGMT_CHANNEL_UPDATE},
-          {"value", (uint8_t)0}
-      });
-      addEndpoint(1, 260, 0xbeef, {0x0000, 0x0003, 0x0006, 0x000a, 0x0019, 0x001a, 0x0300},
-                  {
-                    0x0000, 0x0003, 0x0004, 0x0005, 0x0006, 0x0008, 0x0020, 0x0300, 0x0400,
-                    0x0402, 0x0405, 0x0406, 0x0500, 0x0b01, 0x0b03, 0x0b04, 0x0702, 0x1000,
-                    0xfc01, 0xfc02,
-                  });
-      addEndpoint(242, 0xa1e0, 0x61, {}, { 0x0021 });
-      execCommand(CommandId::SET_RX_ON_WHEN_IDLE, {{"rxOn", (uint8_t)1}});
-    }
-
     auto recv_count = xStreamBufferReceive(m_input_buf, m_buffer.data(), m_buffer.size(), pdMS_TO_TICKS(RINGBUF_TIMEOUT_MS));
 
     if (recv_count == 0)
       continue;
 
-    CommandId command_id = (CommandId)(*((uint16_t*)(m_buffer.data() + 11)));
-    ESP_LOGI(TAG, "Command: %s", COMMAND_ID_NAME(command_id).c_str());
+    auto command_id = (command_id_t)(*((uint16_t*)(m_buffer.data() + 11)));
+    ESP_LOGI(TAG, "Command: %s", get_command_name(command_id));
 
     uint16_t id = 0;
     switch (command_id) {
-    case CommandId::NWK_LEAVE_IND:
+    case NWK_LEAVE_IND:
       break;
-    case CommandId::ZDO_DEV_UPDATE_IND:
+    case ZDO_DEV_UPDATE_IND:
       break;
-    case CommandId::ZDO_DEV_ANNCE_IND:
+    case ZDO_DEV_ANNCE_IND:
       break;
-    case CommandId::ZDO_DEV_AUTHORIZED_IND:
+    case ZDO_DEV_AUTHORIZED_IND:
       break;
-    case CommandId::APSDE_DATA_IND:
-      // utils::hex_dump(m_buffer.data(), recv_count);
+    case APSDE_DATA_IND:
+
+      /*
+       * TODO: Implement data requests (see dumps and z2mqtt logic).
+       */
+
+      // HACK: Guess button pressed by looking at the endpoint id.
       id = *(uint16_t*)(m_buffer.data() + 38);
       if (m_buffer[14] == 04 && id != last_id) {   // Button press
         last_id = id;
@@ -174,48 +231,6 @@ esp_err_t ZBOSSDriver::start_int() {
 
   ESP_LOGI(TAG, "start");
   return (xTaskCreate(&task, "ZBOSSDriver",TASK_STACK * 4, this,TASK_PRIORITY, NULL) == pdTRUE) ? ESP_OK : ESP_FAIL;
-}
-
-BasicResult<ZBOSSFrame> ZBOSSDriver::execCommand(CommandId command_id, const Payload& params) {
-  auto frame_res = ZBOSSFrame::From(FrameType::REQUEST, command_id, params);
-  if (frame_res.IsErr()) {
-    return { "ZBOSSDriver: Failed to create frame: " + frame_res.Err() };
-  }
-  auto frame = frame_res.unwrap();
-
-  frame.m_tsn = m_tsn;
-  m_tsn = (m_tsn + 1) % 255;
-
-  auto res = sendFrame(frame);
-  if (res.IsErr()) {
-    return { "Failed to send frame: " + res.Err() };
-  }
-
-  return { "TODO: return response frame" };
-}
-
-BasicResult<int> ZBOSSDriver::sendFrame(ZBOSSFrame& frame) {
-  auto buffalo = frame.Write();
-  const auto& buf = buffalo->GetBuffer();
-  transport::receive(buf.data(), buf.size());
-
-  // FIXME: We need to check the received size in the future. It would be ideal
-  // to pass the size through the events in APP, receive the data THERE with the
-  // known size and pass them here.
-  auto recv_size = xStreamBufferReceive(m_input_buf, m_buffer.data(), m_buffer.size(), pdMS_TO_TICKS(10'000));
-
-  if (recv_size == 0) {
-    return { "Failed to receive response frame. (timeout)" };
-  }
-
-  // ESP_LOGI(TAG, "Received: %i bytes.", recv_size);
-  // utils::hex_dump(m_buffer.data(), recv_size);
-
-  // auto res = ZBOSSFrame::Read(Buffer(m_buffer.data() + 9, m_buffer.data() + m_buffer.size()));
-
-
-  // return { "ZBOSSDriver: TODO: response handling Not done yet" };
-  return 0;
 }
 
 void ZBOSSDriver::receive_int(const void* data, size_t size) {

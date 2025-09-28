@@ -114,6 +114,7 @@ esp_err_t app::init() {
 	ESP_LOGI(TAG,"init");
 
 	auto res = nvs_flash_init();
+
 	if (res != ESP_OK)
 		return res;
 	res = zb_ncp::init();

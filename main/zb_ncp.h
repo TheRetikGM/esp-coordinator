@@ -26,6 +26,8 @@ private:
 	struct immediate_cmd_process;
 	template <command_id_t CmdId,template<command_id_t> typename ResolveStrategyT>
 	struct delayed_cmd_process;
+  template <command_id_t CmdId, template <command_id_t> typename ResolveStrategyT, typename Arg, typename Resp>
+  struct delayed_cmd_process_direct;
 	template <command_id_t CmdId,typename Arg, typename Req, typename Resp>
 	struct request_cmd_process;
 	template <command_id_t CmdId,typename Res>
@@ -34,8 +36,12 @@ private:
 	struct general_status_arg;
 	template <command_id_t CmdId,typename Arg,typename Res>
 	struct general_status_arg_res;
-	
+
+  template<command_id_t CmdId>
+  struct ind_handle;
+
 	friend void zboss_signal_handler(zb_uint8_t param);
+  friend class ZBOSSDriver;
 
 	uint32_t m_channels_mask;
 	static void continue_zboss(uint8_t );
@@ -50,6 +56,7 @@ private:
 public:
 	static esp_err_t init() { return instance().init_int(); }
 	static void on_rx_data(const void* data,size_t size);
-	static void indication(command_id_t cmd,const void* data,size_t size);
+  template<command_id_t CmdId, typename... TArgs>
+	static void indication(const TArgs&... args);
 	static void send_cmd_data(const void* data,size_t size);
 };

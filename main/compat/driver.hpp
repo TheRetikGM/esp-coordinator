@@ -2,26 +2,12 @@
  * @file main/compat/driver.hpp
  */
 #pragma once
-#include "ZBOSSFrame.hpp"
-#include "commands.hpp"
-#include "enums.hpp"
+#include "esp_err.h"
 #include "esp_log.h"
+#include "freertos/idf_additions.h"
 #include <array>
-
-#define TAG "ZBOSSDriver"
-
-class TestClass {
-  static TestClass& instance() {
-    static TestClass instance{};
-    return instance;
-  }
-public:
-  static esp_err_t init() {
-    auto& i = instance();
-    printf("Instance: %p\n", &i);
-    return 0;
-  }
-};
+#include <cstddef>
+#include <vector>
 
 class ZBOSSDriver {
 private:
@@ -48,14 +34,13 @@ private:
 		static_cast<ZBOSSDriver*>(pvParameter)->task_int();
 	}
 
-  BasicResult<ZBOSSFrame> execCommand(CommandId command_id, const Payload& params);
-  BasicResult<int> sendFrame(ZBOSSFrame& frame);
-
   void receive_int(const void* data, size_t size);
 
   void addEndpoint(uint8_t endpoint, uint16_t profileId, uint16_t deviceId,
                    const std::vector<uint16_t>& inputClusters,
                    const std::vector<uint16_t>& outputClusters);
+
+  void initCommunication();
 
 public:
   static esp_err_t init() { return instance().init_int(); };
@@ -65,4 +50,3 @@ public:
   }
 };
 
-#undef TAG

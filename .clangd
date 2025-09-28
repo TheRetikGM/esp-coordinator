@@ -1,0 +1,13 @@
+CompileFlags:
+  Add:
+    - -std=c++17
+    - isysroot=/home/kuba/.espressif/tools/riscv32-esp-elf/esp-13.2.0_20230928/riscv32-esp-elf
+    - -I/home/kuba/.espressif/tools/esp-clang/16.0.1-fe4f10a809/esp-clang/riscv32-esp-elf/include/c++/11.2.0
+    - -I/home/kuba/.espressif/tools/esp-clang/16.0.1-fe4f10a809/esp-clang/riscv32-esp-elf/include/c++/11.2.0/riscv32-esp-elf/rv32i/ilp32/no-rtti
+    - -I.
+    - -Imain
+    - -Imain/compat
+  Remove:
+    - -fno-shrink-wrap
+    - -fstrict-volatile-bitfields
+    - -fno-tree-switch-conversion

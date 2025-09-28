@@ -94,7 +94,7 @@ esp_err_t protocol::send_data_int(const void* data,size_t size) {
 	}
 
 	utils::sem_lock l(m_tx_sem);
-	
+
 	auto hdr = reinterpret_cast<ncp_header_t*>(m_tx_buffer);
 	hdr->signature[0] = 0xde;
 	hdr->signature[1] = 0xad;
@@ -117,7 +117,7 @@ esp_err_t protocol::send_data_int(const void* data,size_t size) {
 void protocol::on_rx_packet(const ncp_header_t& hdr,const void* data,size_t data_size) {
 	if (hdr.is_ack) {
 		// ack received
-	} 
+	}
 	if (hdr.is_nack) {
 		ESP_LOGE(TAG,"NACK received, retransmitt not supported");
 		return;
@@ -151,7 +151,7 @@ esp_err_t protocol::on_rx_int(const void* data,size_t size) {
 	auto end = &m_rx_buffer[m_rx_buffer_pos];
 
 	while (rx_data_size >= 7) {
-		
+
 		auto p = find_signature(rx_data,end);
 		if (p) {
 			if (p != rx_data) {
@@ -169,9 +169,9 @@ esp_err_t protocol::on_rx_int(const void* data,size_t size) {
 				rx_data += 2;
 				rx_data_size -= 2;
 				ESP_LOGE(TAG,"Invalid header crc %02x/%02x",int(hdr->header_crc),int(hdr_crc));
-				continue;	
+				continue;
 			}
-			if (rx_data_size < (hdr->packet_len+2)) { // 
+			if (rx_data_size < (hdr->packet_len+2)) { //
 				break; // need more data
 			}
 			size_t packet_len;
@@ -179,13 +179,13 @@ esp_err_t protocol::on_rx_int(const void* data,size_t size) {
 				packet_len = sizeof(ncp_header_t);
 				// empty packet
 				on_rx_packet(*hdr,nullptr,0);
-				
+
 			} else {
 				size_t data_len = hdr->packet_len - 5 - 2;
 				packet_len = sizeof(ncp_header_t) + 2 + data_len;
 				auto data_crc_expected = *reinterpret_cast<const uint16_t*>(hdr+1);
 				auto data = reinterpret_cast<const uint8_t*>(hdr+1) + 2;
-				
+
 				auto data_crc = utils::crc16(data,data_len);
 				if (data_crc != data_crc_expected) {
 					ESP_LOGE(TAG,"Invalid data crc %04x/%04x",int(data_crc_expected),int(data_crc));

@@ -42,9 +42,10 @@ private:
 	void send_ack(const ncp_header_t& hdr);
 	void send_nack(const ncp_header_t& hdr);
 	esp_err_t send_data_int(const void* data,size_t size);
-	
+
 public:
-	static esp_err_t init() { return instance().init_int(); }
+	static esp_err_t init() { return instance().init_int();
+  }
 	static esp_err_t start() { return instance().start_int(); }
 
 	static esp_err_t on_rx(const void* data,size_t size) {
